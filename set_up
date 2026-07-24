@@ -1,157 +1,30 @@
-1. 初始化目录
-把 your_name 改成实际用户名：
-export FUNASR_ROOT=/cache/ma-user/your_name/funasr
+ScriptSpeech--Bench进展
+目的：
+支持脚本级的speech+音效的生成与评测，评测方式用agentic的风格
+亮点：
+● 目前脚本级的speech+音效生成还没有恰当的评测方式
+● 根据提供的脚本，用agentic方式自动拆解出需要评测的内容，然后进行call各种tool去评测
+数据Example：
+	○ 单轮：杰克走到接口，不耐烦的说：”xx怎么还没来“；一阵引擎轰鸣声过后，xx来了。
+		■ 这里需要评测Sound是脚步声+引擎声；Speech需要评测情感、音色、内容等
+	○ 多轮：汤姆急切地说：”xxx“；杰瑞嘲讽地回应道：“xxx”。
+		■ 需要拆分多人Speech，并评测情感、音色、内容等
 
-mkdir -p $FUNASR_ROOT/{envs,pkgs,pip-cache,tmp,models,cache,outputs,audios,logs}
-
-export TMPDIR=$FUNASR_ROOT/tmp
-export PIP_CACHE_DIR=$FUNASR_ROOT/pip-cache
-export CONDA_PKGS_DIRS=$FUNASR_ROOT/pkgs
-
-export MODELSCOPE_CACHE=$FUNASR_ROOT/cache/modelscope
-export HF_HOME=$FUNASR_ROOT/cache/huggingface
-export TORCH_HOME=$FUNASR_ROOT/cache/torch
-export XDG_CACHE_HOME=$FUNASR_ROOT/cache/xdg
-export TORCH_EXTENSIONS_DIR=$FUNASR_ROOT/cache/torch-extensions
-export TRITON_CACHE_DIR=$FUNASR_ROOT/cache/triton
-
-# 防止误用 ~/.local 中的 Python 包
-export PYTHONNOUSERSITE=1
-如果 Conda 未初始化：
-source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-2. 创建 Paraformer 主环境
-conda create -p $FUNASR_ROOT/envs/paraformer -y python=3.10
-conda activate $FUNASR_ROOT/envs/paraformer
-
-python -m pip install --upgrade pip setuptools wheel
-先查看 GPU 驱动：
-nvidia-smi
-然后安装与服务器驱动匹配的 CUDA 版 PyTorch。服务器镜像已有正确 pip 源时可先尝试：
-pip install torch torchaudio
-确认确实检测到了 GPU：
-python -c "import torch; print('torch:', torch.__version__); print('cuda:', torch.version.cuda); print('available:', torch.cuda.is_available()); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
-
-python -c "import torch; print('torch:', torch.__version__); print('cuda:', torch.version.cuda); print('available:', torch.cuda.is_available()); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
-/cache/ma-user/your_name/funasr/envs/paraformer/lib/python3.10/site-packages/torch/_subclasses/functional_tensor.py:368: UserWarning: Failed to initialize NumPy: No module named 'numpy' (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:84.)
-  cpu = _conversion_method_template(device=torch.device("cpu"))
-torch: 2.13.0+cu130
-cuda: 13.0
-/cache/ma-user/your_name/funasr/envs/paraformer/lib/python3.10/site-packages/torch/cuda/__init__.py:188: UserWarning: CUDA initialization: The NVIDIA driver on your system is too old (found version 12020). Please update your GPU driver by downloading and installing a new version from the URL: http://www.nvidia.com/Download/index.aspx Alternatively, go to: https://pytorch.org to install a PyTorch version that has been compiled with your version of the CUDA driver. (Triggered internally at /__w/pytorch/pytorch/c10/cuda/CUDAFunctions.cpp:119.)
-  return torch._C._cuda_getDeviceCount() > 0
-available: False
-gpu: None
-
-修改：
-conda activate /cache/ma-user/your_name/funasr/envs/paraformer
-
-python -m pip uninstall -y torch torchaudio torchvision
-安装 NumPy，并固定兼容性较好的 PyTorch 版本：
-python -m pip install "numpy==1.26.4"
-
-python -m pip install \
-  "torch==2.5.1" \
-  "torchaudio==2.5.1" \
-  --index-url https://download.pytorch.org/whl/cu121
-然后验证：
-python -c "import numpy, torch; print('numpy:', numpy.__version__); print('torch:', torch.__version__); print('cuda:', torch.version.cuda); print('available:', torch.cuda.is_available()); print('gpu:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
-
-
-
-只有 available: True 才继续。安装 FunASR：
-pip install \
-  "funasr==1.3.14" \
-  modelscope \
-  soundfile \
-  scipy \
-  fastapi \
-  "uvicorn[standard]" \
-  python-multipart
-3. 预下载并验证模型
-python - <<'PY'
-from funasr import AutoModel
-
-model = AutoModel(
-    model="paraformer-zh",
-    vad_model="fsmn-vad",
-    vad_kwargs={"max_single_segment_time": 60000},
-    punc_model="ct-punc",
-    device="cuda:0",
-    disable_update=True,
-)
-
-print("Paraformer、FSMN-VAD、CT-Punc 加载成功")
-PY
-这一步会将模型下载到 $MODELSCOPE_CACHE。后续启动不会重复下载。
-使用一段真实音频测试：
-python - <<'PY'
-from funasr import AutoModel
-
-model = AutoModel(
-    model="paraformer-zh",
-    vad_model="fsmn-vad",
-    vad_kwargs={"max_single_segment_time": 60000},
-    punc_model="ct-punc",
-    device="cuda:0",
-    disable_update=True,
-)
-
-result = model.generate(
-    input="/cache/ma-user/your_name/funasr/audios/test.wav",
-    batch_size_s=300,
-)
-
-print(result[0]["text"])
-print(result[0]["timestamp"][:10])
-PY
-确认 timestamp 返回类似下面的毫秒时间戳：
-[[880, 1120], [1120, 1360], ...]
-4. 快速启动官方 API
-CUDA_VISIBLE_DEVICES=0 funasr-server \
-  --model paraformer \
-  --device cuda \
-  --port 8000
-不建议直接把这个端口暴露到公网。可以先用 SSH 转发：
-ssh -L 8000:localhost:8000 user@server
-官方 API 适合验证模型。正式切句系统仍建议封装自己的 FastAPI 服务，把以下信息完整返回：
-原始识别文本；
-字级时间戳；
-VAD 分段；
-原文对齐分数；
-最终句子边界；
-异常样本标记。
-5. 单独创建 Nano/vLLM 环境
-避免 vLLM 改变主环境的 PyTorch 依赖：
-source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-
-export FUNASR_ROOT=/cache/ma-user/your_name/funasr
-export CONDA_PKGS_DIRS=$FUNASR_ROOT/pkgs
-export PIP_CACHE_DIR=$FUNASR_ROOT/pip-cache
-export TMPDIR=$FUNASR_ROOT/tmp
-export MODELSCOPE_CACHE=$FUNASR_ROOT/cache/modelscope
-export HF_HOME=$FUNASR_ROOT/cache/huggingface
-export TRITON_CACHE_DIR=$FUNASR_ROOT/cache/triton
-export PYTHONNOUSERSITE=1
-
-conda create -p $FUNASR_ROOT/envs/nano-vllm -y python=3.10
-conda activate $FUNASR_ROOT/envs/nano-vllm
-
-pip install --upgrade pip setuptools wheel
-pip install "funasr==1.3.14" "vllm==0.12.0" \
-  safetensors tiktoken websockets regex soundfile
-验证 Nano：
-from funasr.auto.auto_model_vllm import AutoModelVLLM
-
-model = AutoModelVLLM(
-    model="FunAudioLLM/Fun-ASR-Nano-2512",
-    tensor_parallel_size=1,
-    gpu_memory_utilization=0.8,
-)
-
-result = model.generate(
-    ["/path/to/audio.wav"],
-    language="中文",
-)
-
-print(result[0]["text"])
-print(result[0].get("timestamps"))
-最后注意：/cache 减少的是系统盘占用，并不代表文件不占空间；另外部分云平台释放实例后会清空 /cache。需要确认该目录的持久化策略，至少将代码、环境配置、模型版本清单和最终切分结果同步到持久存储。
+ToDo：
+1. 先构建一个分类法，按照这个分类法去生成少量测试集的文本，要求信息足够丰富多样
+	a. 按说话人数、轮次分：单人单轮、单人多轮、多人多轮
+	b. 按是否有Sound分：纯Speech、Speech + Sound
+	c. Speech采样方式：
+		i. 情感类型采样：从平静、开心、疑惑、惊讶、无奈、紧张、愤怒、委屈、尴尬、疲惫等情绪中选择。
+		ii. 情感强度采样：分为1/3、2/3、3/3三个等级，分别对应轻微、明显、强烈的情绪表达。
+		iii. 表达方式采样：包括语速快慢、音量高低、尾音上扬/下沉、拖音、停顿、重音、一字一顿等。
+		iv. 4.副语言/语气词采样：包括轻笑、鼻笑、叹气、吸气、轻咳、清嗓，以及“嗯、啊、欸、哎、哦、呃、啧”等口语化语气词。
+	d. Sound采样方式：
+		i. xxx
+2. 推理与评测构建
+	a. 先不考虑其他baseline，先只用SeedAudio；后续我们可以用agent框架加text2speech、text2audio模型来做baseline
+	b. 评测需求：
+		i. 音色评测：说话人切分（如果有多人的话），WavLM + TDNN的说话人音色过滤（参考seedtts eval的模型）
+		ii. 发音内容评测：ASR模型输出的WER
+		iii. 情感、副语言评测：Gemini
+		iv. Sound评测：meta发布的PE-A-Frame & Gemini
